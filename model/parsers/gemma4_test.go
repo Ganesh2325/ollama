@@ -1501,3 +1501,65 @@ func TestParseGemma4ToolCall_RawQuotedStructuralString(t *testing.T) {
 		t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestParseGemma4ToolCall_ManyStringValues(t *testing.T) {
+	// 16 rows × 3 columns is 48 strings. Index 44's old placeholder was a comma,
+	// which also separates two later placeholders, so a call with 47 or more
+	// string values failed to parse and was dropped.
+	const rows, cols = 16, 3
+	patterns := []string{
+		"alpha",
+		"has, comma",
+		"quote \" here",
+		"braces {a:1}",
+		"slash \\ path",
+		"sentinel \x001\x01",
+	}
+
+	var b strings.Builder
+	b.WriteString("call:write_table{rows:[")
+	wantRows := make([]any, 0, rows)
+	n := 0
+	for r := 0; r < rows; r++ {
+		if r > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('[')
+		row := make([]any, cols)
+		for c := 0; c < cols; c++ {
+			if c > 0 {
+				b.WriteByte(',')
+			}
+			val := patterns[n%len(patterns)]
+			row[c] = val
+			b.WriteString(`<|"|>`)
+			b.WriteString(val)
+			b.WriteString(`<|"|>`)
+			n++
+		}
+		b.WriteByte(']')
+		wantRows = append(wantRows, row)
+	}
+	b.WriteString("]}")
+
+	if n < 47 {
+		t.Fatalf("repro built %d strings, need at least 47", n)
+	}
+
+	got, err := parseGemma4ToolCall(b.String(), nil)
+	if err != nil {
+		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name: "write_table",
+			Arguments: testArgs(map[string]any{
+				"rows": wantRows,
+			}),
+		},
+	}
+	if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+		t.Fatalf("many string values differed (-want +got):\n%s", diff)
+	}
+}
