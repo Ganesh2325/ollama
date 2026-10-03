@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -441,29 +440,17 @@ func gemma4ArgsToJSON(s string) string {
 	text := gemma4QuotedStringRe.ReplaceAllStringFunc(s, func(match string) string {
 		submatches := gemma4QuotedStringRe.FindStringSubmatch(match)
 		quotedStrings = append(quotedStrings, submatches[1])
-		return gemma4StringPlaceholder(len(quotedStrings) - 1)
+		return "\x00" + string(rune(len(quotedStrings)-1)) + "\x00"
 	})
 
 	text = quoteGemma4BareKeys(text)
 
 	for i, value := range quotedStrings {
 		escaped, _ := json.Marshal(value)
-		text = strings.ReplaceAll(text, gemma4StringPlaceholder(i), string(escaped))
+		text = strings.ReplaceAll(text, "\x00"+string(rune(i))+"\x00", string(escaped))
 	}
 
 	return text
-}
-
-// gemma4StringPlaceholder stands in for a lifted string while bare keys are quoted.
-//
-// The index is decimal digits between two different sentinels. Digits are not JSON
-// syntax, and a comma between placeholders (\x01,\x00) cannot form another
-// placeholder. The previous form, NUL + rune(index) + NUL, made index 44 (',')
-// identical to the comma separating two later placeholders, so ReplaceAll rewrote
-// that comma and any tool call with 47 or more string values was dropped.
-// json.Marshal escapes both sentinels, so restored strings cannot recreate one.
-func gemma4StringPlaceholder(i int) string {
-	return "\x00" + strconv.Itoa(i) + "\x01"
 }
 
 func quoteGemma4BareKeys(s string) string {
